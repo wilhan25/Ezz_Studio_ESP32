@@ -11,21 +11,26 @@ extern "C" {
 
 enum ScreensEnum {
     _SCREEN_ID_FIRST = 1,
-    SCREEN_ID_PAGE1 = 1,
+    SCREEN_ID_MAIN = 1,
     _SCREEN_ID_LAST = 1
 };
 
 typedef struct _objects_t {
-    lv_obj_t *page1;
-    lv_obj_t *barra_dist;
-    lv_obj_t *valor_dist;
-    lv_obj_t *cm_dist;
+    lv_obj_t *main;
+    lv_obj_t *btn1;
+    lv_obj_t *text_btn1;
+    lv_obj_t *btn2;
+    lv_obj_t *text_btn2;
+    lv_obj_t *btn3;
+    lv_obj_t *text_btn3;
+    lv_obj_t *btn4;
+    lv_obj_t *text_btn4;
 } objects_t;
 
 extern objects_t objects;
 
-void create_screen_page1();
-void tick_screen_page1();
+void create_screen_main();
+void tick_screen_main();
 
 void tick_screen_by_id(enum ScreensEnum screenId);
 void tick_screen(int screen_index);

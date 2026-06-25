@@ -9,23 +9,20 @@ TFT_eSPI display = TFT_eSPI();
 #define SCREEN_HEIGHT 128
 #define SCREEN_WIDTH  160
 
-// Config do sensor de distância
-#define TRIG  14
-#define ECHO  13
-#define MAX_DISTANCE 700
-float timeOut = MAX_DISTANCE * 60; 
-int soundVelocity = 340;
-
-// Criação do Semáforo (Mutex) para proteger o LVGL
-SemaphoreHandle_t xGuiMutex;
+// joystick
+int xPin = 13, yPin = 12;
 
 // Config, funções e variáveis do lvgl
 static lv_disp_draw_buf_t draw_buf;
 static lv_color_t buf[SCREEN_WIDTH * 10];
+lv_group_t * grupoBTN;
+
+// CRIAÇÃO DO MUTEX PARA PROTEGER O LVGL
+SemaphoreHandle_t xGuiMutex;
 
 void tarefaLVGL(void *pvParameters) {
   while (1) {
-    // Tenta pegar a chave do LVGL. Se conseguir, processa a tela.
+    // Só mexe no LVGL se a chave (Mutex) estiver livre
     if (xSemaphoreTake(xGuiMutex, portMAX_DELAY) == pdTRUE) {
       lv_timer_handler(); 
       xSemaphoreGive(xGuiMutex); // Devolve a chave
@@ -51,54 +48,61 @@ void meu_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *colo
   lv_disp_flush_ready(disp);
 }
 
-void TaskDistancia(void *pv){
-  pinMode(TRIG, OUTPUT);
-  pinMode(ECHO, INPUT);
-  unsigned long pingTime;
-  float distancia;
-
-  lv_color_t azul = lv_palette_main(LV_PALETTE_BLUE);
-  lv_color_t vermelho = lv_palette_main(LV_PALETTE_RED);
+void TaskMenu(void *pv){
+  // CORREÇÃO: Pinos analógicos devem ser apenas INPUT
+  pinMode(xPin, INPUT);
+  pinMode(yPin, INPUT);
+  
+  lv_obj_t* grid[2][2] = {
+    {objects.btn1, objects.btn2},
+    {objects.btn3, objects.btn4}
+  };
+  
+  int linha = 0, coluna = 0;
   
   while (1) {
-    digitalWrite(TRIG, LOW);
-    delayMicroseconds(2);
-    digitalWrite(TRIG, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(TRIG, LOW);
-    
-    // Medição do tempo de resposta
-    pingTime = pulseIn(ECHO, HIGH, timeOut);
-    distancia = (float)pingTime * soundVelocity / 2 / 10000;
+    int xVal = analogRead(xPin);
+    int yVal = analogRead(yPin);
+    bool muda_foco = false;
 
-    Serial.printf("Distance: ");
-    Serial.println(distancia);
-
-    uint8_t calculo_cor = (uint8_t)((distancia/150)*255);
-    lv_color_t corBarra = lv_color_mix(vermelho, azul, calculo_cor);
-
-    // Tenta pegar a chave do LVGL para atualizar os componentes com segurança
-    if (xSemaphoreTake(xGuiMutex, portMAX_DELAY) == pdTRUE) {
-      lv_bar_set_range(objects.barra_dist, 0, 150);
-      lv_bar_set_value(objects.barra_dist, (int)distancia, LV_ANIM_ON);
-      lv_obj_set_style_bg_color(objects.barra_dist,corBarra, LV_PART_INDICATOR| LV_STATE_DEFAULT);
-      lv_label_set_text(objects.valor_dist, String(distancia, 2).c_str());
-      
-      xSemaphoreGive(xGuiMutex); // Devolve a chave do LVGL
+    // Lógica de movimentação por eixos
+    if(xVal > 3000 && coluna < 1){       // Direita
+      coluna++;
+      muda_foco = true;      
+    }
+    else if(xVal < 1000 && coluna > 0){  // Esquerda
+      coluna--;
+      muda_foco = true;
+    }
+    else if(yVal > 3000 && linha < 1){   // Baixo (Aumenta a linha)
+      linha++;
+      muda_foco = true;
+    }
+    else if(yVal < 1000 && linha > 0){   // Cima (Diminui a linha)
+      linha--;
+      muda_foco = true;
     }
 
-    // Tempo de respiro essencial para o ultrassom e para o FreeRTOS
-    vTaskDelay(pdMS_TO_TICKS(500));
-  }
+    // Se mudou a posição, aplica o foco protegendo com o Mutex
+    if (muda_foco) {
+      if (xSemaphoreTake(xGuiMutex, portMAX_DELAY) == pdTRUE) {
+        lv_group_focus_obj(grid[linha][coluna]);
+        xSemaphoreGive(xGuiMutex);
+      }
+    }
+    
+    vTaskDelay(pdMS_TO_TICKS(muda_foco ? 250 : 50));
+  }  
 }
 
 void setup() {
   Serial.begin(115200);
+  
+  // CRIALÇÃO MANDATÓRIA DO MUTEX BEFORE AS TASKS
+  xGuiMutex = xSemaphoreCreateMutex();
+
   display.init();
   display.setRotation(3);
-
-  // Inicializa o Mutex ANTES de criar as tarefas
-  xGuiMutex = xSemaphoreCreateMutex();
 
   // Inicialização do LVGL
   lv_init();
@@ -112,11 +116,29 @@ void setup() {
   lv_disp_drv_register(&driver_display);
   ui_init();
 
+  ui_init();
+
+  // ADICIONE ESTA LINHA PARA LIMPAR O FOCO TRAVADO DO SQUARELINE:
+  lv_obj_clear_state(objects.btn1, LV_STATE_FOCUSED);
+
+  // Grupo para os botões gerenciarem os focos
+  grupoBTN = lv_group_create();
+  lv_group_add_obj(grupoBTN, objects.btn1);
+  lv_group_add_obj(grupoBTN, objects.btn2);
+  lv_group_add_obj(grupoBTN, objects.btn3);
+  lv_group_add_obj(grupoBTN, objects.btn4);
+
+  if (xSemaphoreTake(xGuiMutex, portMAX_DELAY) == pdTRUE) {
+    lv_group_focus_obj(objects.btn1);
+    xSemaphoreGive(xGuiMutex);
+  }
+
   // Cria as tarefas no FreeRTOS
   xTaskCreate(tarefaTick, "Tick", 1024, NULL, 3, NULL);
   xTaskCreate(tarefaLVGL, "Time_lvgl", 4096, NULL, 2, NULL);
-  xTaskCreate(TaskDistancia, "distancia", 4096, NULL, 4, NULL);
+  xTaskCreate(TaskMenu, "menu", 3072, NULL, 2, NULL);
 }
 
 void loop() {
+  // Mantido vazio - FreeRTOS assume o controle
 }
